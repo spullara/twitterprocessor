@@ -1,6 +1,7 @@
 package twitterprocessor;
 
 import java.util.List;
+import java.util.Queue;
 import java.util.Spliterator;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -31,7 +32,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
   private final ArrayBlockingQueue<T> queue;
 
   // The list of queues that are being processed
-  private final List<ArrayBlockingQueue<T>> queues;
+  private final List<Queue<T>> queues;
 
   // This is set to true when there are no more elements to enqueue from the stream
   private volatile boolean done;
@@ -39,21 +40,22 @@ public class PullSpliterator<T> implements Spliterator<T> {
   /**
    * Converts a embarrassingly sequential stream into a parallel stream with
    * Streams.parallelStream(new PullSpliterator<>(stream))
-   *
+   * <p/>
    * Uses the available processors as an estimate for the number of queues to generate.
    * You should experiment with this for your workload though.
    *
    * @param stream
    */
   public PullSpliterator(Stream<T> stream) {
-    this(stream, Runtime.getRuntime().availableProcessors());
+    // Default to assuming hyperthreaded CPUs which are the most common at this point
+    this(stream, Runtime.getRuntime().availableProcessors() / 2);
   }
 
   /**
    * Converts a embarrassingly sequential stream into a parallel stream with
    * Streams.parallelStream(new PullSpliterator<>(stream))
    *
-   * @param stream The sequential stream to convert
+   * @param stream    The sequential stream to convert
    * @param maxqueues The number of spliterators to generate for this workload
    */
   public PullSpliterator(Stream<T> stream, int maxqueues) {
@@ -69,7 +71,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
           try {
             // Uneven queues can cause put to block
             // with little chance of recovery
-            ArrayBlockingQueue<T> queue;
+            Queue<T> queue;
             do {
               int size = queues.size();
               queue = queues.get(current.getAndIncrement() % size);
@@ -84,7 +86,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
   }
 
   // Creates a new split and adds itself to the parent
-  private PullSpliterator(List<ArrayBlockingQueue<T>> queues, int maxqueues, PullSpliterator<T> parent) {
+  private PullSpliterator(List<Queue<T>> queues, int maxqueues, PullSpliterator<T> parent) {
     this.queues = queues;
     this.maxqueues = maxqueues;
     this.parent = parent;
@@ -107,11 +109,8 @@ public class PullSpliterator<T> implements Spliterator<T> {
         action.accept(poll);
         return true;
       }
-      if (parent.done) {
-        System.out.println("Optimized sleep value: " + sleep);
-        return false;
-      }
-      // Sadly this is way faster than poll(timeout) ~ 3%
+      if (parent.done) return false;
+      // Sadly this is way faster than poll(timeout) ~ 7% in my tests
       // Automatically adjusts for the ratio between source speed
       // and the speed at which we can process them
       try {

@@ -105,7 +105,7 @@ public class App {
     Stream<String> lines = bufferedReader.lines();
     AtomicInteger tweets = new AtomicInteger();
     AtomicInteger links = new AtomicInteger();
-    ConcurrentMap<String, Integer> map = Streams.parallelStream(new PullSpliterator<String>(lines, processors))
+    ConcurrentMap<String, Integer> map = Streams.parallelStream(new PullSpliterator<>(lines, 2))
             .peek(a -> {
               int i = tweets.incrementAndGet();
               if (i % 100000 == 0) {
