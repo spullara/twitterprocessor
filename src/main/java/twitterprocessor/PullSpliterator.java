@@ -5,6 +5,7 @@ import java.util.Spliterator;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -62,7 +63,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
     queues.add(queue);
     parent = this;
     ForkJoinPool.commonPool().execute(() -> {
-      int[] i = new int[1];
+      AtomicInteger current = new AtomicInteger();
       stream.forEach(element -> {
         if (element != null) {
           try {
@@ -71,7 +72,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
             ArrayBlockingQueue<T> queue;
             do {
               int size = queues.size();
-              queue = queues.get(i[0]++ % size);
+              queue = queues.get(current.getAndIncrement() % size);
             } while (!queue.offer(element));
           } catch (Throwable e) {
             e.printStackTrace();
