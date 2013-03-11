@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Queue;
 import java.util.Spliterator;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,10 +30,10 @@ public class PullSpliterator<T> implements Spliterator<T> {
   private final PullSpliterator<T> parent;
 
   // This spliterators queue of elements to process
-  private final ArrayBlockingQueue<T> queue;
+  private final BlockingQueue<T> queue;
 
   // The list of queues that are being processed
-  private final List<Queue<T>> queues;
+  private final List<BlockingQueue<T>> queues;
 
   // This is set to true when there are no more elements to enqueue from the stream
   private volatile boolean done;
@@ -71,11 +72,21 @@ public class PullSpliterator<T> implements Spliterator<T> {
           try {
             // Uneven queues can cause put to block
             // with little chance of recovery
-            Queue<T> queue;
+            BlockingQueue<T> queue;
+            boolean finished;
+            int spin = 0;
             do {
               int size = queues.size();
               queue = queues.get(current.getAndIncrement() % size);
-            } while (!queue.offer(element));
+              if (spin++ > size) {
+                // If they are all full, no need to spin, just
+                // wait on the latest queue`
+                finished = true;
+                queue.put(element);
+              } else {
+                finished = queue.offer(element);
+              }
+            } while (!finished);
           } catch (Throwable e) {
             e.printStackTrace();
           }
@@ -86,7 +97,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
   }
 
   // Creates a new split and adds itself to the parent
-  private PullSpliterator(List<Queue<T>> queues, int maxqueues, PullSpliterator<T> parent) {
+  private PullSpliterator(List<BlockingQueue<T>> queues, int maxqueues, PullSpliterator<T> parent) {
     this.queues = queues;
     this.maxqueues = maxqueues;
     this.parent = parent;
