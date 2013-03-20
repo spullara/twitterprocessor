@@ -80,7 +80,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
               queue = queues.get(current.getAndIncrement() % size);
               if (spin++ > size) {
                 // If they are all full, no need to spin, just
-                // wait on the latest queue`
+                // wait on the latest queue
                 finished = true;
                 queue.put(element);
               } else {

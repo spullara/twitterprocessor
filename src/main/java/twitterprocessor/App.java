@@ -9,12 +9,7 @@ import com.fasterxml.jackson.databind.MappingJsonFactory;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -22,7 +17,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -34,7 +28,8 @@ import java.util.stream.Stream;
 import java.util.stream.Streams;
 import java.util.zip.GZIPInputStream;
 
-import static java.util.stream.ConcurrentCollectors.groupingReduce;
+import static java.util.stream.Collectors.groupingByConcurrent;
+import static java.util.stream.Collectors.reducing;
 
 /**
  * Read and process a feed of compressed tweets
@@ -116,7 +111,7 @@ public class App {
             .flatMap(toLinks)
             .peek(a -> links.incrementAndGet())
             .flatMap(toURL)
-            .collectUnordered(groupingReduce(URL::getHost, ConcurrentHashMap::new, u -> 1, Integer::sum));
+            .collectUnordered(groupingByConcurrent(URL::getHost, reducing(u -> 1, Integer::sum)));
 
     List<Map.Entry<String, Integer>> entries = new ArrayList<>(map.entrySet());
     entries.sort((e1, e2) -> e2.getValue() - e1.getValue());
