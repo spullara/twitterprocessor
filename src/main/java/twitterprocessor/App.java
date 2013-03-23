@@ -10,14 +10,15 @@ import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 
 import java.io.*;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
+import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -62,11 +63,24 @@ public class App {
 
     Pattern noProtocol = Pattern.compile("^[A-Za-z0-9-]+[.]");
 
-    FlatMapper<String, URL> toURL = squelch((link, consumer) -> {
+    ForkJoinPool fj = ForkJoinPool.commonPool();
+
+
+    ConcurrentLinkedQueue<String> bitlyList = new ConcurrentLinkedQueue<>();
+    FlatMapper<String, String> toURL = squelch((link, consumer) -> {
+      String host;
+      URL url;
       if (noProtocol.matcher(link).find()) {
-        consumer.accept(new URL("http://" + link));
+        url = new URL("http://" + link);
+        host = url.getHost();
       } else {
-        consumer.accept(new URL(link));
+        url = new URL(link);
+        host = url.getHost();
+      }
+      if (host.equals("bit.ly")) {
+        bitlyList.add(url.toString());
+      } else {
+        consumer.accept(host);
       }
     });
 
@@ -100,7 +114,7 @@ public class App {
     Stream<String> lines = bufferedReader.lines();
     AtomicInteger tweets = new AtomicInteger();
     AtomicInteger links = new AtomicInteger();
-    ConcurrentMap<String, Integer> map = Streams.parallelStream(new PullSpliterator<>(lines, 2))
+    ConcurrentMap<String, Integer> map = Streams.parallelStream(new PullSpliterator<>(lines, processors))
             .peek(a -> {
               int i = tweets.incrementAndGet();
               if (i % 100000 == 0) {
@@ -111,7 +125,10 @@ public class App {
             .flatMap(toLinks)
             .peek(a -> links.incrementAndGet())
             .flatMap(toURL)
-            .collectUnordered(groupingByConcurrent(URL::getHost, reducing(u -> 1, Integer::sum)));
+            .collectUnordered(groupingByConcurrent(u -> u, reducing(u -> 1, Integer::sum)));
+
+    // Now resolve all the bit.ly URLs
+
 
     List<Map.Entry<String, Integer>> entries = new ArrayList<>(map.entrySet());
     entries.sort((e1, e2) -> e2.getValue() - e1.getValue());
