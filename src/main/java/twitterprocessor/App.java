@@ -9,16 +9,21 @@ import com.fasterxml.jackson.databind.MappingJsonFactory;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 
-import java.io.*;
-import java.net.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -26,7 +31,6 @@ import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import java.util.stream.FlatMapper;
 import java.util.stream.Stream;
-import java.util.stream.Streams;
 import java.util.zip.GZIPInputStream;
 
 import static java.util.stream.Collectors.groupingByConcurrent;
@@ -36,6 +40,9 @@ import static java.util.stream.Collectors.reducing;
  * Read and process a feed of compressed tweets
  */
 public class App {
+
+  private static final int _1K = 1024;
+  private static final int _128K = 128 * _1K;
 
   @Argument(alias = "f", description = "File or s3 url", required = true)
   private static String file;
@@ -62,9 +69,6 @@ public class App {
     FlatMapper<String, JsonNode> lineToJson = squelch((line, consumer) -> consumer.accept(jf.createParser(line).readValueAsTree()));
 
     Pattern noProtocol = Pattern.compile("^[A-Za-z0-9-]+[.]");
-
-    ForkJoinPool fj = ForkJoinPool.commonPool();
-
 
     ConcurrentLinkedQueue<String> bitlyList = new ConcurrentLinkedQueue<>();
     FlatMapper<String, String> toURL = squelch((link, consumer) -> {
@@ -110,11 +114,11 @@ public class App {
       in = new FileInputStream(file);
     }
 
-    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(new GZIPInputStream(in), "UTF-8"));
-    Stream<String> lines = bufferedReader.lines();
+    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(new GZIPInputStream(in, _1K), "UTF-8"), _128K);
     AtomicInteger tweets = new AtomicInteger();
     AtomicInteger links = new AtomicInteger();
-    ConcurrentMap<String, Integer> map = Streams.parallelStream(new PullSpliterator<>(lines, processors))
+    Stream<String> lines = bufferedReader.lines();
+    ConcurrentMap<String, Integer> map = lines.parallel()
             .peek(a -> {
               int i = tweets.incrementAndGet();
               if (i % 100000 == 0) {
@@ -125,7 +129,7 @@ public class App {
             .flatMap(toLinks)
             .peek(a -> links.incrementAndGet())
             .flatMap(toURL)
-            .collectUnordered(groupingByConcurrent(u -> u, reducing(u -> 1, Integer::sum)));
+            .collect(groupingByConcurrent(u -> u, reducing(u -> 1, Integer::sum)));
 
     // Now resolve all the bit.ly URLs
 

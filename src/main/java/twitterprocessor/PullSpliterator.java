@@ -1,7 +1,6 @@
 package twitterprocessor;
 
 import java.util.List;
-import java.util.Queue;
 import java.util.Spliterator;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -134,7 +133,7 @@ public class PullSpliterator<T> implements Spliterator<T> {
 
   @Override
   public int characteristics() {
-    return CONCURRENT;
+    return IMMUTABLE | NONNULL;
   }
 
   @Override
@@ -143,6 +142,11 @@ public class PullSpliterator<T> implements Spliterator<T> {
       return new PullSpliterator<>(queues, maxqueues, parent);
     }
     return null;
+  }
+
+  @Override
+  public long estimateSize() {
+    return Long.MAX_VALUE;
   }
 
 }
