@@ -9,32 +9,26 @@ import com.fasterxml.jackson.databind.MappingJsonFactory;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
-import java.util.stream.FlatMapper;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
+import static java.util.Spliterators.spliterator;
 import static java.util.stream.Collectors.groupingByConcurrent;
 import static java.util.stream.Collectors.reducing;
+import static java.util.stream.Streams.emptyStream;
+import static java.util.stream.Streams.stream;
 
 /**
  * Read and process a feed of compressed tweets
@@ -55,6 +49,10 @@ public class App {
 
   private static Logger squelchLog = Logger.getLogger("Squelched");
 
+  private static <T> Stream<T> def() {
+    return emptyStream();
+  }
+
   public static void main(String[] args) throws IOException, URISyntaxException {
     try {
       Args.parse(App.class, args);
@@ -66,12 +64,13 @@ public class App {
 
     MappingJsonFactory jf = new MappingJsonFactory();
 
-    FlatMapper<String, JsonNode> lineToJson = squelch((line, consumer) -> consumer.accept(jf.createParser(line).readValueAsTree()));
+    Function<String, Stream<JsonNode>> lineToJson = squelch(line -> Arrays.asList((JsonNode) jf.createParser(line).readValueAsTree()).stream());
 
     Pattern noProtocol = Pattern.compile("^[A-Za-z0-9-]+[.]");
 
     ConcurrentLinkedQueue<String> bitlyList = new ConcurrentLinkedQueue<>();
-    FlatMapper<String, String> toURL = squelch((link, consumer) -> {
+    Function<String, Stream<String>> toURL = squelch(link -> {
+      List<String> list = new LinkedList<>();
       String host;
       URL url;
       if (noProtocol.matcher(link).find()) {
@@ -84,15 +83,17 @@ public class App {
       if (host.equals("bit.ly")) {
         bitlyList.add(url.toString());
       } else {
-        consumer.accept(host);
+        list.add(host);
       }
+      return list.stream();
     });
 
-    FlatMapper<JsonNode, String> toLinks = (tweet, consumer) -> {
+    Function<JsonNode, Stream<String>> toLinks = tweet -> {
       JsonNode links = tweet.get("l");
       if (links != null) {
-        links.forEach(link -> consumer.accept(link.textValue()));
+        return stream(spliterator(links.iterator(), links.size(), 0)).map(JsonNode::textValue);
       }
+      return emptyStream();
     };
 
     long start = System.currentTimeMillis();
@@ -129,7 +130,8 @@ public class App {
             .flatMap(toLinks)
             .peek(a -> links.incrementAndGet())
             .flatMap(toURL)
-            .collect(groupingByConcurrent(u -> u, reducing(u -> 1, Integer::sum)));
+            .collect(groupingByConcurrent(u -> u, reducing(1, u -> 1, Integer::sum
+            )));
 
     // Now resolve all the bit.ly URLs
 
@@ -144,17 +146,20 @@ public class App {
     System.out.println(System.currentTimeMillis() - start);
   }
 
-  public static <T, V> FlatMapper<T, V> squelch(ThrowFlatMapper<T, V> f) {
-    return (t, c) -> {
+  public static <T, V> Function<T, Stream<V>> squelch(ThrowFunction<T, Stream<V>> f) {
+    return t -> {
       try {
-        f.flattenInto(t, c);
+        return f.apply(t);
       } catch (Exception e) {
+        e.printStackTrace();
+        System.exit(1);
         squelchLog.log(Level.WARNING, String.valueOf(t), e);
+        return emptyStream();
       }
     };
   }
 
-  interface ThrowFlatMapper<T, V> {
-    void flattenInto(T t, Consumer<V> c) throws Exception;
+  interface ThrowFunction<T, V> {
+    V apply(T t) throws Exception;
   }
 }
