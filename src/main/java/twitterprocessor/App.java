@@ -9,13 +9,25 @@ import com.fasterxml.jackson.databind.MappingJsonFactory;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.logging.Level;
@@ -70,7 +82,6 @@ public class App {
 
     ConcurrentLinkedQueue<String> bitlyList = new ConcurrentLinkedQueue<>();
     Function<String, Stream<String>> toURL = squelch(link -> {
-      List<String> list = new LinkedList<>();
       String host;
       URL url;
       if (noProtocol.matcher(link).find()) {
@@ -83,9 +94,11 @@ public class App {
       if (host.equals("bit.ly")) {
         bitlyList.add(url.toString());
       } else {
+        List<String> list = new LinkedList<>();
         list.add(host);
+        return list.stream();
       }
-      return list.stream();
+      return emptyStream();
     });
 
     Function<JsonNode, Stream<String>> toLinks = tweet -> {
@@ -118,6 +131,7 @@ public class App {
     BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(new GZIPInputStream(in, _1K), "UTF-8"), _128K);
     AtomicInteger tweets = new AtomicInteger();
     AtomicInteger links = new AtomicInteger();
+    Set<Thread> threads = new CopyOnWriteArraySet<>();
     Stream<String> lines = bufferedReader.lines();
     ConcurrentMap<String, Integer> map = lines.parallel()
             .peek(a -> {
@@ -133,6 +147,7 @@ public class App {
             .collect(groupingByConcurrent(u -> u, reducing(1, u -> 1, Integer::sum
             )));
 
+    System.out.println(threads.size());
     // Now resolve all the bit.ly URLs
 
 
@@ -151,8 +166,6 @@ public class App {
       try {
         return f.apply(t);
       } catch (Exception e) {
-        e.printStackTrace();
-        System.exit(1);
         squelchLog.log(Level.WARNING, String.valueOf(t), e);
         return emptyStream();
       }
